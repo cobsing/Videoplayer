@@ -305,9 +305,7 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) { }
         if (name == null) name = uri.getLastPathSegment();
         return name == null ? "Video" : name;
-    }
-
-    // ------------------------------------------------------------ arayüz
+    }    // ------------------------------------------------------------ arayüz
 
     private int dp(float v) {
         return (int) (v * getResources().getDisplayMetrics().density);
@@ -535,4 +533,131 @@ public class MainActivity extends Activity {
 
     private void pick(int req) {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        i.addCat
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        startActivityForResult(i, req);
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (res != RESULT_OK || data == null || data.getData() == null) return;
+        if (req == REQ_VIDEO) open(data.getData(), -1);
+        else if (req == REQ_SUB) loadSubtitle(data.getData());
+    }
+
+    private void loadSubtitle(Uri uri) {
+        if (mp == null) return;
+        try {
+            String name = queryName(uri);
+            int dot = name.lastIndexOf('.');
+            String ext = dot >= 0 ? name.substring(dot) : ".srt";
+            File f = new File(getCacheDir(), "sub_" + System.currentTimeMillis() + ext);
+            try (InputStream in = getContentResolver().openInputStream(uri);
+                 OutputStream out = new FileOutputStream(f)) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            }
+            mp.addSlave(Media.Slave.Type.Subtitle, Uri.fromFile(f), true);
+            toast("Altyazı yüklendi");
+        } catch (Exception e) {
+            toast("Altyazı yüklenemedi");
+        }
+    }
+
+    private void showTracks(final boolean audio) {
+        if (mp == null) return;
+        final MediaPlayer.TrackDescription[] t = audio ? mp.getAudioTracks() : mp.getSpuTracks();
+        if (t == null || t.length == 0) {
+            toast(audio ? "Ses parçası yok" : "Altyazı parçası yok");
+            return;
+        }
+        int cur = audio ? mp.getAudioTrack() : mp.getSpuTrack();
+        String[] names = new String[t.length];
+        int checked = -1;
+        for (int i = 0; i < t.length; i++) {
+            names[i] = t[i].name;
+            if (t[i].id == cur) checked = i;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(audio ? "Ses parçası" : "Altyazı parçası")
+                .setSingleChoiceItems(names, checked, (d, which) -> {
+                    if (audio) mp.setAudioTrack(t[which].id);
+                    else mp.setSpuTrack(t[which].id);
+                    d.dismiss();
+                })
+                .setNegativeButton("İptal", null)
+                .show();
+    }
+
+    private void showSubMenu() {
+        String[] items = {"Altyazı parçası seç", "Dosyadan altyazı yükle", "Altyazı boyutu"};
+        new AlertDialog.Builder(this)
+                .setTitle("Altyazı")
+                .setItems(items, (d, which) -> {
+                    if (which == 0) showTracks(false);
+                    else if (which == 1) pick(REQ_SUB);
+                    else showSizeMenu();
+                })
+                .show();
+    }
+
+    private void showSizeMenu() {
+        final String[] names = {"Küçük", "Normal", "Büyük", "Çok büyük"};
+        final int[] vals = {19, 16, 13, 10};
+        new AlertDialog.Builder(this)
+                .setTitle("Altyazı boyutu")
+                .setItems(names, (d, which) -> {
+                    prefs.edit().putInt("subsize", vals[which]).apply();
+                    // Boyut ayarı için oynatıcı yeniden kurulur, kaldığın yerden devam eder
+                    long pos = mp != null ? mp.getTime() : 0;
+                    Uri u = currentUri;
+                    releasePlayer();
+                    initPlayer();
+                    if (u != null) open(u, pos);
+                })
+                .show();
+    }
+
+    private void showSettings() {
+        String[] items = {
+                "Altyazı gecikmesi +0.5 sn", "Altyazı gecikmesi -0.5 sn",
+                "Ses gecikmesi +0.1 sn", "Ses gecikmesi -0.1 sn",
+                "Gecikmeleri sıfırla"};
+        new AlertDialog.Builder(this)
+                .setTitle("Ayarlar")
+                .setItems(items, (d, which) -> {
+                    if (mp == null) return;
+                    switch (which) {
+                        case 0: spuDelay += 500000; break;
+                        case 1: spuDelay -= 500000; break;
+                        case 2: audioDelay += 100000; break;
+                        case 3: audioDelay -= 100000; break;
+                        default: spuDelay = 0; audioDelay = 0;
+                    }
+                    mp.setSpuDelay(spuDelay);
+                    mp.setAudioDelay(audioDelay);
+                    toast("Altyazı: " + spuDelay / 1000 + " ms, Ses: " + audioDelay / 1000 + " ms");
+                })
+                .show();
+    }
+
+    // ------------------------------------------------------------ yardımcılar
+
+    private static float clamp(float v, float lo, float hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+
+    private static String fmt(long ms) {
+        long s = Math.max(0, ms) / 1000;
+        long h = s / 3600, m = (s % 3600) / 60, sec = s % 60;
+        return h > 0 ? String.format(Locale.US, "%d:%02d:%02d", h, m, sec)
+                : String.format(Locale.US, "%02d:%02d", m, sec);
+    }
+
+    private void toast(String s) {
+        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
+    }
+                        }
+    
